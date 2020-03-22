@@ -8,7 +8,11 @@ KEY_CTRL_Z = "\x1a"
 KEY_CTRL_Y = "\x19"
 KEY_CTRL_P = "\x10"
 KEY_CTRL_D = "\x04"
+KEY_CTRL_R = "\x12"
+KEY_CTRL_S = "\x13"
+KEY_CTRL_W = "\x17"
 KEY_CTRL_O = "\x0f"
+KEY_CTRL_Q = "\x11"
 KEY_CTRL_BACKSPACE = "\x08"
 KEY_ESC = "\x1b"
 
@@ -113,11 +117,21 @@ class DisplayContext:
         self.displays = [DefaultDisplay(self)]
         self.wantsToExit = False
 
+    def pushDisplay(self, display):
+        self.displays.append(display)
+        self.fullRedraw()
+
+    def pushDisplays(self, displays):
+        self.displays.extend(displays)
+        self.fullRedraw()
+
     def openFile(self, fileName):
         self.displays = [d for d in self.displays if not isinstance(d, TextBufferDisplay)]
 
         if fileName not in self.openFiles:
             self.openFiles[fileName] = FileDisplay(self, fileName)
+
+        self.openFiles[fileName].checkDisk()
 
         self.displays.append(self.openFiles[fileName])
 
@@ -139,15 +153,36 @@ class DisplayContext:
             return True
 
         if char == KEY_CTRL_O:
-            self.newWindow(OpenFiles(self))
+            whichFile = 0
+
+            if self.displays and isinstance(self.displays[-1], FileDisplay):
+                try:
+                    whichFile = sorted(self.openFiles).index(self.displays[-1].fileName)
+                except ValueError:
+                    pass
+
+            self.newWindow(OpenFiles(self, whichFile))
             return True
 
         if self.displays[-1].receiveChar(char):
             return True
 
-        if char == "\x11":
-            self.wantsToExit = True
+        if char == KEY_CTRL_Q:
+            needClose = [o for o in self.openFiles.values() if o.isChanged()]
+            if not needClose:
+                self.wantsToExit = True
+            else:
+                isFirst = True
+                displays = []
+                for n in needClose:
+                    displays.append(CloseBeforeSavingDialog(self, n, postAction=self.setExitFlag))
+                    isFirst = False
+                self.pushDisplays(displays)
+
             return True
+
+    def setExitFlag(self):
+        self.wantsToExit = True
 
     def removeDisplay(self, disp):
         self.displays.remove(disp)
@@ -252,7 +287,7 @@ class Selection:
         l0, c0, l1, c1 = self.line0, self.col0, self.line1, self.col1
 
         if not lines:
-            return 0, 0, 0, 0
+            return Selection(0, 0, 0, 0)
 
         if l0 < 0:
             l0 = 0
@@ -521,6 +556,17 @@ class Selection:
 
         return (line - (self.line1 - self.line0), col)
 
+    def ensureValid(self, lines):
+        l0, c0, l1, c1 = self.line0, self.col0, self.line1, self.col1
+
+        if l0 >= len(lines):
+            l0 = max(0, len(lines) - 1)
+
+        if l1 >= len(lines):
+            l1 = max(0, len(lines) - 1)
+
+        return Selection(l0, c0, l1, c1)
+
 
 class UndoBuffer:
     def __init__(self):
@@ -574,7 +620,7 @@ class TextBufferDisplay(Display):
         self.topLine = 0
         self.leftmostCol = 0
 
-        self.selections = []
+        self.selections = [Selection(0, 0, 0, 0)]
 
         self.linecountWidth = 5
 
@@ -594,6 +640,15 @@ class TextBufferDisplay(Display):
     def getTitle(self):
         return None
 
+    def save(self):
+        pass
+
+    def revert(self):
+        pass
+
+    def checkDisk(self):
+        pass
+
     def receiveChar(self, char):
         # make sure we have an undo buffer
         if char == KEY_CTRL_Z:
@@ -612,6 +667,16 @@ class TextBufferDisplay(Display):
 
                 self.ensureOnScreen(self.selections[-1])
                 self.redraw()
+            return
+
+        if char == KEY_CTRL_S:
+            self.save()
+            self.redraw()
+            return
+
+        if char == KEY_CTRL_R:
+            self.revert()
+            self.redraw()
             return
 
         if char in (
@@ -934,6 +999,52 @@ class FileDisplay(TextBufferDisplay):
     def getTitle(self):
         return ("* " if self.isChanged() else "  ") + self.fileName
 
+    def save(self):
+        if self.isChanged():
+            with open(self.path, "w") as f:
+                f.write("".join([x + "\n" for x in self.lines]))
+
+            self.linesOnDisk = self.lines
+
+    def checkDisk(self):
+        if not self.isChanged():
+            with open(self.path, "r") as f:
+                def stripnewline(x):
+                    if x.endswith("\n"):
+                        return x[:-1]
+                    return x
+
+                newLines = [stripnewline(x) for x in f.readlines()]
+                if newLines != self.lines:
+                    self.lines = newLines
+                    self.linesOnDisk = newLines
+
+                    self.selections = [s.ensureValid(lines) for s in self.selections]
+
+    def revert(self):
+        self.lines = self.linesOnDisk
+        self.checkDisk()
+
+    def receiveChar(self, char):
+        if char == KEY_CTRL_W:
+            self.close()
+            return
+
+        return super().receiveChar(char)
+
+    def close(self):
+        if self.isChanged():
+            self.context.pushDisplay(
+                CloseBeforeSavingDialog(self.context, self, postAction=self.completeClose)
+            )
+        else:
+            self.completeClose()
+
+    def completeClose(self):
+        self.context.openFiles.pop(self.fileName)
+        self.context.removeDisplay(self)
+
+
 class DefaultDisplay(TextBufferDisplay):
     def __init__(self, context):
         super().__init__(context)
@@ -945,17 +1056,52 @@ class DefaultDisplay(TextBufferDisplay):
             "                    Welcome to braxblime",
             "",
             "key bindings:",
-            "    Ctrl-P to navigate files",
-            "    Ctrl-S to save",
+            "    Ctrl-Q to quit",
+            "    Ctrl-P to open files",
             "    Ctrl-O to see open files",
+            "",
+            "within a file:",
+            "    Ctrl-W to close",
+            "    Ctrl-S to save",
+            "    Ctrl-R to revert",
             "    Ctrl-D to select words",
         ]
 
 
+class CloseBeforeSavingDialog(Display):
+    def __init__(self, context, file, postAction):
+        super().__init__(context)
+        self.file = file
+        self.postAction = postAction
+
+        self.resized()
+
+    def resized(self):
+        self.width = min(self.context.windowX - 30, 150)
+        self.xPos = self.context.windowX // 2 - self.width // 2
+        self.yPos = 5
+
+    def redraw(self):
+        self.box()
+
+    def redraw(self):
+        self.box(self.xPos, self.yPos, self.xPos + self.width, self.yPos + 6, clear=True)
+        self.text(self.xPos + 2, self.yPos + 2, pad("File " + self.file.fileName + " is dirty", self.width - 10))
+        self.text(self.xPos + 2, self.yPos + 4, pad("Save before exiting? [Y/n]", self.width - 10))
+
+    def receiveChar(self, char):
+        if char in "yYn\n":
+            if char != "n":
+                self.file.save()
+
+            self.context.removeDisplay(self)
+            self.postAction()
+
+
 class OpenFiles(Display):
-    def __init__(self, context):
+    def __init__(self, context, whichFileIx=0):
         self.context = context
-        self.whichFileIx = 0
+        self.whichFileIx = whichFileIx
         self.topLineIx = 0
 
     def redraw(self):
@@ -988,6 +1134,12 @@ class OpenFiles(Display):
 
         return res
 
+    def getOpenFile(self):
+        fnames = sorted(self.context.openFiles)
+        if 0 <= self.whichFileIx < len(fnames):
+            return self.context.openFiles[fnames[self.whichFileIx]]
+        return None
+
     def _receiveChar(self, char):
         if char == KEY_ESC:
             self.context.removeDisplay(self)
@@ -1012,6 +1164,19 @@ class OpenFiles(Display):
             self.whichFileIx = max(self.whichFileIx - self.context.windowY, 0)
             self.ensureOnScreen()
             return True
+
+        if char in (KEY_CTRL_S, KEY_CTRL_R, KEY_CTRL_W):
+            fileObj = self.getOpenFile()
+            if fileObj:
+                if char == KEY_CTRL_S:
+                    fileObj.save()
+                if char == KEY_CTRL_R:
+                    fileObj.revert()
+                if char == KEY_CTRL_W:
+                    fileObj.close()
+                self.redraw()
+
+            return
 
         if char == "\n":
             if 0 <= self.whichFileIx < len(self.context.openFiles):
@@ -1079,7 +1244,7 @@ class FileSelector(Display):
             regex.append("[a-z0-9]*")
             dumpedSoFar = b
 
-        pat = re.compile("".join(regex))
+        pat = re.compile(".*" + "".join(regex) + ".*")
 
         return lambda c: pat.match(c)
 
