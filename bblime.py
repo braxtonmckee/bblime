@@ -8,6 +8,7 @@ KEY_CTRL_Z = "\x1a"
 KEY_CTRL_Y = "\x19"
 KEY_CTRL_P = "\x10"
 KEY_CTRL_D = "\x04"
+KEY_CTRL_O = "\x0f"
 KEY_CTRL_BACKSPACE = "\x08"
 KEY_ESC = "\x1b"
 
@@ -135,6 +136,10 @@ class DisplayContext:
 
         if char == KEY_CTRL_P:
             self.newWindow(FileSelector(self))
+            return True
+
+        if char == KEY_CTRL_O:
+            self.newWindow(OpenFiles(self))
             return True
 
         if self.displays[-1].receiveChar(char):
@@ -774,7 +779,7 @@ class TextBufferDisplay(Display):
                 return
 
         # display the character
-        # self.text(self.context.windowX - len(repr(char)) - 2, 0, repr(char))
+        self.text(self.context.windowX - len(repr(char)) - 2, 0, repr(char))
 
     def replaceText(self, selection, newContents):
         selection = selection.clipToReal(self.lines)
@@ -884,7 +889,7 @@ class TextBufferDisplay(Display):
         for screenRow in range(self.context.windowY - 2):
             lineNumber = self.topLine + screenRow + 1
 
-            self.lightText(0, screenRow + 1, pad(str(lineNumber), self.linecountWidth))
+            self.lightText(0, screenRow + 1, pad(str(lineNumber), self.linecountWidth + 2))
 
             self.textWithCursors(
                 self.linecountWidth + 2,
@@ -921,9 +926,13 @@ class FileDisplay(TextBufferDisplay):
                 return x
 
             self.lines = [stripnewline(x) for x in f.readlines()]
+            self.linesOnDisk = list(self.lines)
+
+    def isChanged(self):
+        return self.lines != self.linesOnDisk
 
     def getTitle(self):
-        return self.fileName
+        return ("* " if self.isChanged() else "  ") + self.fileName
 
 class DefaultDisplay(TextBufferDisplay):
     def __init__(self, context):
@@ -941,6 +950,83 @@ class DefaultDisplay(TextBufferDisplay):
             "    Ctrl-O to see open files",
             "    Ctrl-D to select words",
         ]
+
+
+class OpenFiles(Display):
+    def __init__(self, context):
+        self.context = context
+        self.whichFileIx = 0
+        self.topLineIx = 0
+
+    def redraw(self):
+        text = "Open Files"
+        self.textBold(self.context.windowX // 2 - len(text) // 2, 0, text)
+        for row in range(1, self.context.windowY - 1):
+            self.text(0, row, " " * self.context.windowX)
+
+        if not self.context.openFiles:
+            text = "<no open files>"
+            self.lightText(self.context.windowX // 2 - len(text) // 2, self.context.windowY // 2, text)
+            return
+
+        openFilesList = sorted(self.context.openFiles)
+
+        for screenRow in range(self.context.windowY - 4):
+            fileIx = screenRow + self.topLineIx
+
+            if fileIx >= 0 and fileIx < len(openFilesList):
+                if fileIx == self.whichFileIx:
+                    self.highlightedText(2, screenRow + 2, self.context.openFiles[openFilesList[fileIx]].getTitle())
+                else:
+                    self.text(2, screenRow + 2, self.context.openFiles[openFilesList[fileIx]].getTitle())
+
+    def receiveChar(self, char):
+        res = self._receiveChar(char)
+
+        if res:
+            self.redraw()
+
+        return res
+
+    def _receiveChar(self, char):
+        if char == KEY_ESC:
+            self.context.removeDisplay(self)
+            return True
+
+        if char == "KEY_DOWN":
+            self.whichFileIx = min(self.whichFileIx + 1, len(self.context.openFiles) - 1)
+            self.ensureOnScreen()
+            return True
+
+        if char == "KEY_UP":
+            self.whichFileIx = max(self.whichFileIx - 1, 0)
+            self.ensureOnScreen()
+            return True
+
+        if char == "KEY_PPAGE":
+            self.whichFileIx = min(self.whichFileIx + self.context.windowY, len(self.context.openFiles) - 1)
+            self.ensureOnScreen()
+            return True
+
+        if char == "KEY_NPAGE":
+            self.whichFileIx = max(self.whichFileIx - self.context.windowY, 0)
+            self.ensureOnScreen()
+            return True
+
+        if char == "\n":
+            if 0 <= self.whichFileIx < len(self.context.openFiles):
+                self.context.removeDisplay(self)
+                self.context.openFile(sorted(self.context.openFiles)[self.whichFileIx])
+                self.context.fullRedraw()
+                return False
+            return True
+
+    def ensureOnScreen(self):
+        if self.whichFileIx < self.topLineIx:
+            self.topLineIx = max(0, self.whichFileIx - 1)
+
+        if self.whichFileIx > self.topLineIx + self.context.windowY - 2:
+            self.topLineIx = max(0, self.whichFileIx - self.context.windowY // 2)
 
 
 class FileSelector(Display):
