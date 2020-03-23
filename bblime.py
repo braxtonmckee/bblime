@@ -161,6 +161,16 @@ class DisplayContext:
             self.receiveChar(c)
 
     def receiveChar(self, char):
+        if char in ("kNXT3", "kPRV3"):
+            # alt-page-down/up
+            if self.openFiles:
+                cof = self.currentOpenFile()
+                if cof is not None:
+                    index = sorted(self.openFiles).index(cof.fileName)
+                    index = (index + (1 if char == 'kNXT3' else -1)) % len(self.openFiles)
+                    self.openFile(sorted(self.openFiles)[index])
+            return True
+
         if char == "KEY_RESIZE":
             self.windowY, self.windowX = self.stdscr.getmaxyx()
 
@@ -939,7 +949,7 @@ class TextBufferDisplay(Display):
         if self.isPythonFile():
             if 0 <= line < len(self.lines):
                 indent = self.lines[line][:len(self.lines[line]) - len(self.lines[line].lstrip())]
-                if self.lines[line].endswith(":"):
+                if self.lines[line].endswith(":") and col >= len(self.lines[line]):
                     indent += "    "
 
         self.insert(line, col, "\n")
@@ -1050,8 +1060,6 @@ class TextBufferDisplay(Display):
         if self.getTitle() is not None:
             self.textBold(0, 0, pad(str(self.getTitle()), self.context.windowX - 20))
 
-        #self.text(0, 0, str(self.selections))
-
     def visibleTextForLine(self, lineIndex):
         width = self.context.windowX - self.linecountWidth - 5
 
@@ -1138,6 +1146,8 @@ class DefaultDisplay(TextBufferDisplay):
             "    Ctrl-Q to quit",
             "    Ctrl-P to open files",
             "    Ctrl-O to see open files",
+            "    Alt-PageDn to go to next open file",
+            "    Alt-PageUp to go to prior open file",
             "",
             "within a file:",
             "    Ctrl-W to close",
@@ -1185,6 +1195,7 @@ class OpenFiles(Display):
 
     def redraw(self):
         text = "Open Files"
+        self.text(0, 0, " " * self.context.windowX)
         self.textBold(self.context.windowX // 2 - len(text) // 2, 0, text)
         for row in range(1, self.context.windowY - 1):
             self.text(0, row, " " * self.context.windowX)
@@ -1733,4 +1744,10 @@ def main(stdscr, *args):
         stdscr.refresh()
 
 if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("bblime [dir]")
+        print()
+        print("Edit all the files within 'dir'.")
+        sys.exit(-1)
+
     sys.exit(curses.wrapper(lambda stdscr: main(stdscr, *sys.argv[1:])))

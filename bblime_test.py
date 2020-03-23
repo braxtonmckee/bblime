@@ -161,3 +161,14 @@ def test_newline_with_indent():
 
     context.receiveChars("KEY_LEFT", "\t")
     assert context.currentOpenFile().lines[5] == "     "
+
+    # go to the beginning of 'def f(x)'
+    context.receiveChars(bblime.KEY_CTRL_G, *"4\n")
+    assert context.currentOpenFile().lines[3] == "def f(x):"
+
+    # hit enter
+    context.receiveChars("\n")
+    assert context.currentOpenFile().lines[3] == ""
+    assert context.currentOpenFile().lines[4] == "def f(x):"
+
+
