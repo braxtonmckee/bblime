@@ -96,9 +96,10 @@ class FakeWindow(bblime.CursesWindow):
 CANONICAL_CONTENTS = {}
 CANONICAL_CONTENTS["file.py"] = (
     "# a comment\n"
-    "some text\n"
+    "CONSTANT = 'hi'\n"
     "\n"
-    "word\n"
+    "def f(x):\n"
+    "    pass\n"
 )
 
 def canonicalFakeFileSet():
@@ -108,15 +109,55 @@ def canonicalFakeFileSet():
 def test_basic():
     context = bblime.DisplayContext(FakeWindow(100, 50), canonicalFakeFileSet())
 
-    context.receiveChar(bblime.KEY_CTRL_P)
-    context.receiveChars("file")
-    context.receiveChar("KEY_DOWN")
-    context.receiveChar("\n")
+    # select 'file.py'
+    context.receiveChars(bblime.KEY_CTRL_P, *"file", "KEY_DOWN", "\n")
 
     assert context.currentOpenFile().fileName == "file.py"
 
-    context.receiveChar("KEY_DOWN")
-    context.receiveChar("KEY_SEND")
-    context.receiveChar("a")
+    # KEY_SEND is shift-end
+    context.receiveChars("KEY_DOWN", "KEY_SEND", "a")
 
     assert context.currentOpenFile().lines[1] == "a"
+
+def test_newline_with_indent():
+    context = bblime.DisplayContext(FakeWindow(100, 50), canonicalFakeFileSet())
+
+    # select 'file.py'
+    context.receiveChars(bblime.KEY_CTRL_P, *"file", "KEY_DOWN", "\n")
+
+    # go to end of line 5 and hit enter
+    context.receiveChars(bblime.KEY_CTRL_G, *"5\n", "KEY_END", "\n")
+
+    # we should have inserted some spaces to meet the four tabs
+    assert context.currentOpenFile().lines[5] == "    "
+
+    # now, if we hit backspace, go back to the start of the line
+    context.receiveChars("KEY_BACKSPACE")
+
+    assert context.currentOpenFile().lines[5] == ""
+
+    # now, hit a space
+    context.receiveChars(" ")
+    assert context.currentOpenFile().lines[5] == " "
+    context.receiveChars("KEY_BACKSPACE")
+    assert context.currentOpenFile().lines[5] == ""
+
+    # now, hit two spaces
+    context.receiveChars(*"  ")
+    assert context.currentOpenFile().lines[5] == "  "
+    context.receiveChars("KEY_BACKSPACE")
+    assert context.currentOpenFile().lines[5] == ""
+
+    # now, hit five spaces
+    context.receiveChars(*"     ")
+    assert context.currentOpenFile().lines[5] == "     "
+    context.receiveChars("KEY_BACKSPACE")
+    assert context.currentOpenFile().lines[5] == "    "
+    context.receiveChars("KEY_BACKSPACE")
+    assert context.currentOpenFile().lines[5] == ""
+
+    context.receiveChars("\t")
+    assert context.currentOpenFile().lines[5] == "    "
+
+    context.receiveChars("KEY_LEFT", "\t")
+    assert context.currentOpenFile().lines[5] == "     "

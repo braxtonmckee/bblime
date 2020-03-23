@@ -6,6 +6,7 @@ import re
 
 KEY_CTRL_Z = "\x1a"
 KEY_CTRL_Y = "\x19"
+KEY_CTRL_G = "\x07"
 KEY_CTRL_P = "\x10"
 KEY_CTRL_D = "\x04"
 KEY_CTRL_R = "\x12"
@@ -442,13 +443,26 @@ class Selection:
 
         return line, col
 
-    def delta(self, lines, dLine, dCol, extend=False, word=False, whitespace=False):
+    def delta(self, lines, dLine, dCol, extend=False, word=False, isHomeKey=False, isTabBackspace=False):
         if not lines:
             return Selection(0, 0, 0, 0)
 
         l0, c0, l1, c1 = self.line0, self.col0, self.line1, self.col1
 
-        if whitespace:
+        if isTabBackspace and c0 > 0:
+            assert dCol == -1
+
+            frontWhitespaceChars = len(lines[l1]) - len(lines[l1].lstrip())
+            if c0 <= frontWhitespaceChars:
+                whitespace = lines[l1][:frontWhitespaceChars]
+                if whitespace == " " * len(whitespace):
+                    # it's all whitespace here
+                    if c0 % 4 == 0:
+                        dCol = -4
+                    else:
+                        dCol = -(c0 % 4)
+
+        if isHomeKey:
             c1 = len(lines[l1]) - len(lines[l1].lstrip())
         elif word:
             assert dLine == 0
@@ -652,6 +666,9 @@ class TextBufferDisplay(Display):
 
         self._undoBuffer = None
 
+    def isPythonFile(self):
+        return False
+
     @property
     def undoBuffer(self):
         if self._undoBuffer is None:
@@ -751,14 +768,14 @@ class TextBufferDisplay(Display):
             if char == "KEY_HOME":
                 self.selections = [
                     d.delta(self.lines, 0, -d.col1)
-                    if d.col1 else d.delta(self.lines, 0, 1, whitespace=True)
+                    if d.col1 else d.delta(self.lines, 0, 1, isHomeKey=True)
                     for d in self.selections
                 ]
 
             if char == "KEY_SHOME":
                 self.selections = [
                     d.delta(self.lines, 0, -d.col1, extend=True)
-                    if d.col1 else d.delta(self.lines, 0, 1, whitespace=True, extend=True)
+                    if d.col1 else d.delta(self.lines, 0, 1, isHomeKey=True, extend=True)
                     for d in self.selections
                 ]
 
@@ -811,7 +828,11 @@ class TextBufferDisplay(Display):
 
         if not self.isReadOnly:
             if char == "KEY_BACKSPACE":
-                self.selections = [s.delta(self.lines, 0, -1, extend=True) if s.isSingle() else s for s in self.selections]
+                self.selections = [
+                    s.delta(self.lines, 0, -1, extend=True, isTabBackspace=self.isPythonFile())
+                    if s.isSingle() else s for s in self.selections
+                ]
+
                 for i in range(len(self.selections)):
                     self.deleteSelection(self.selections[i])
 
@@ -842,7 +863,22 @@ class TextBufferDisplay(Display):
                     self.deleteSelection(self.selections[i])
 
                 for i in range(len(self.selections)):
-                    self.insert(self.selections[i].line1, self.selections[i].col1, "\n")
+                    self.insertNewlineWithIndent(self.selections[i].line1, self.selections[i].col1)
+
+                self.selections = Selection.mergeContiguous(self.selections)
+
+                self.undoBuffer.pushState((list(self.lines), list(self.selections)))
+
+                self.ensureOnScreen(self.selections[-1])
+                self.redraw()
+                return
+
+            if char == "\t":
+                for i in range(len(self.selections)):
+                    self.deleteSelection(self.selections[i])
+
+                for i in range(len(self.selections)):
+                    self.insertTabWithIndent(self.selections[i].line1, self.selections[i].col1)
 
                 self.selections = Selection.mergeContiguous(self.selections)
 
@@ -894,7 +930,33 @@ class TextBufferDisplay(Display):
             )
 
         for i in range(len(self.selections)):
-            self.selections[i] = self.selections[i].rangeDeleted(selection.clipToReal(self.lines))
+            self.selections[i] = self.selections[i].rangeDeleted(selection)
+
+    def insertNewlineWithIndent(self, line, col):
+        indent = ""
+
+        # implement python newlines
+        if self.isPythonFile():
+            if 0 <= line < len(self.lines):
+                indent = self.lines[line][:len(self.lines[line]) - len(self.lines[line].lstrip())]
+                if self.lines[line].endswith(":"):
+                    indent += "    "
+
+        self.insert(line, col, "\n")
+        if indent:
+            self.insert(line + 1, 0, indent)
+
+    def insertTabWithIndent(self, line, col):
+        if not self.isPythonFile() or not (0 <= line < len(self.lines)):
+            self.insert(line, col, "\t")
+        else:
+            frontWhitespaceChars = len(self.lines[line]) - len(self.lines[line].lstrip())
+
+            if col <= frontWhitespaceChars and self.lines[line][:frontWhitespaceChars] == (" " * frontWhitespaceChars):
+                # we're hitting 'tab' in a bunch of spaces. round up to the nearest 4
+                self.insert(line, col, " " * (4 - (col % 4)))
+            else:
+                self.insert(line, col, "    ")
 
     def insert(self, line, col, newText):
         if newText == "\n" * len(newText):
@@ -1009,6 +1071,9 @@ class FileDisplay(TextBufferDisplay):
         self.lines = self.context.fileSet.readlines(self.path)
         self.linesOnDisk = list(self.lines)
 
+    def isPythonFile(self):
+        return self.fileName.endswith(".py")
+
     def isChanged(self):
         return self.lines != self.linesOnDisk
 
@@ -1038,6 +1103,11 @@ class FileDisplay(TextBufferDisplay):
         if char == KEY_CTRL_W:
             self.close()
             return
+
+        if char == KEY_CTRL_G:
+            self.context.pushDisplay(
+                GoToLineDisplay(self.context, self)
+            )
 
         return super().receiveChar(char)
 
@@ -1340,6 +1410,226 @@ class FileSelector(Display):
             return True
 
 
+class GoToLineDisplay(Display):
+    def __init__(self, context, file):
+        super().__init__(context)
+        self.file = file
+        self.contents = ""
+        self.cursor = 0
+        self.resized()
+
+    def resized(self):
+        self.width = min(self.context.windowX - 30, 150)
+        self.xPos = self.context.windowX // 2 - self.width // 2
+        self.yPos = 5
+
+    def redraw(self):
+        self.box()
+
+    def redraw(self):
+        self.box(self.xPos, self.yPos, self.xPos + self.width, self.yPos + 6, clear=True)
+        self.text(self.xPos + 2, self.yPos + 2, pad("Go to line:", self.width - 10))
+        self.text(self.xPos + 2, self.yPos + 4, pad(self.contents, self.width - 10))
+
+    def setContents(self, contents):
+        self.contents = contents
+
+    def receiveChar(self, char):
+        res = self._receiveChar(char)
+
+        if res:
+            self.redraw()
+
+        return res
+
+    def _receiveChar(self, char):
+        if char == KEY_ESC:
+            self.context.removeDisplay(self)
+            return True
+
+        if char == "KEY_BACKSPACE" and self.cursor > 0:
+            self.setContents(self.contents[:self.cursor - 1] + self.contents[self.cursor:])
+            self.cursor -= 1
+            return True
+
+        if char == KEY_CTRL_BACKSPACE:
+            self.setContents(self.contents[self.cursor:])
+            self.cursor = 0
+            return True
+
+        if char == "kDC5":
+            self.setContents(self.contents[:self.cursor])
+            return True
+
+        if char == "KEY_DC" and self.cursor < len(self.contents):
+            self.setContents(self.contents[:self.cursor] + self.contents[self.cursor + 1:])
+            return True
+
+        if char == "KEY_LEFT":
+            self.cursor = max(0, self.cursor - 1)
+            return True
+
+        if char == "KEY_RIGHT":
+            self.cursor = min(len(self.contents), self.cursor + 1)
+            return True
+
+        if char == "\n":
+            try:
+                line = int(self.contents)
+            except Exception:
+                line = 1
+
+            line -= 1
+
+            self.file.selections = [Selection(line, 0, line, 0)]
+            self.file.ensureOnScreen(self.file.selections[-1])
+
+            self.context.removeDisplay(self)
+            return False
+
+        if len(char) == 1 and (char.isalnum() or char in ("/ _.")):
+            self.setContents(self.contents[:self.cursor] + char + self.contents[self.cursor:])
+            self.cursor += 1
+            return True
+
+
+class FileSelector(Display):
+    def __init__(self, context):
+        self.context = context
+        self.filterText = ""
+        self.cursor = 0
+        self.selectedMatchIx = None
+        self.matches = self.context.fileSet.sortedNames
+
+        self.resized()
+
+    def resized(self):
+        self.width = min(self.context.windowX - 30, 150)
+        self.xPos = self.context.windowX // 2 - self.width // 2
+        self.yPos = 5
+
+    def setFilter(self, filterText):
+        self.filterText = filterText
+
+        filterFun = self.buildFilter(self.filterText)
+
+        self.matches = [x for x in self.context.fileSet.sortedNames if filterFun(x)]
+        self.selectedMatchIx = None
+
+    def buildFilter(self, filterText):
+        if not filterText:
+            return lambda x: True
+
+        regex = []
+
+        breakpoints = [0]
+
+        for i in range(1, len(filterText)):
+            if filterText[i].isupper() or filterText[i] == "_":
+                breakpoints.append(i)
+            elif filterText[i] == "/":
+                breakpoints.append(i)
+            elif filterText[i] == ".":
+                breakpoints.append(i)
+            elif i > 0 and filterText[i - 1] == "/":
+                breakpoints.append(i)
+
+        breakpoints.append(len(filterText))
+
+        dumpedSoFar = 0
+
+        for b in breakpoints:
+            regex.append(filterText[dumpedSoFar:b].replace(".", "\\."))
+            regex.append("[a-z0-9]*")
+            dumpedSoFar = b
+
+        pat = re.compile(".*" + "".join(regex) + ".*")
+
+        return lambda c: pat.match(c)
+
+    def redraw(self):
+        self.box(self.xPos, self.yPos, self.xPos + self.width, self.yPos + 20, clear=True)
+        self.textWithCursors(self.xPos + 1, self.yPos + 1, pad(self.filterText, self.width - 2), [self.cursor])
+
+        self.startMatchIx = 0
+        if self.selectedMatchIx is not None:
+            self.startMatchIx = max(0, self.selectedMatchIx - 4)
+
+        for lineIx in range(15):
+            matchIx = self.startMatchIx + lineIx
+
+            if matchIx >= 0 and matchIx < len(self.matches):
+                if matchIx == self.selectedMatchIx:
+                    self.highlightedText(self.xPos + 2, self.yPos + 3 + lineIx, pad(self.matches[matchIx], self.width - 4))
+                else:
+                    self.text(self.xPos + 2, self.yPos + 3 + lineIx, pad(self.matches[matchIx], self.width - 4))
+            else:
+                self.text(self.xPos + 2, self.yPos + 3 + lineIx, pad("", self.width - 4))
+
+    def receiveChar(self, char):
+        res = self._receiveChar(char)
+
+        if res:
+            self.redraw()
+
+        return res
+
+    def _receiveChar(self, char):
+        if char == KEY_ESC:
+            self.context.removeDisplay(self)
+            return True
+
+        if char == "KEY_BACKSPACE" and self.cursor > 0:
+            self.setFilter(self.filterText[:self.cursor - 1] + self.filterText[self.cursor:])
+            self.cursor -= 1
+            return True
+
+        if char == KEY_CTRL_BACKSPACE:
+            self.setFilter(self.filterText[self.cursor:])
+            self.cursor = 0
+            return True
+
+        if char == "kDC5":
+            self.setFilter(self.filterText[:self.cursor])
+            return True
+
+        if char == "KEY_DC" and self.cursor < len(self.filterText):
+            self.setFilter(self.filterText[:self.cursor] + self.filterText[self.cursor + 1:])
+            return True
+
+        if char == "KEY_LEFT":
+            self.cursor = max(0, self.cursor - 1)
+            return True
+
+        if char == "KEY_RIGHT":
+            self.cursor = min(len(self.filterText), self.cursor + 1)
+            return True
+
+        if char == "KEY_DOWN":
+            if self.selectedMatchIx is None:
+                self.selectedMatchIx = -1
+
+            self.selectedMatchIx = min(self.selectedMatchIx + 1, len(self.matches))
+            return True
+
+        if char == "KEY_UP":
+            if self.selectedMatchIx is None:
+                self.selectedMatchIx = -1
+
+            self.selectedMatchIx = max(0, self.selectedMatchIx - 1)
+            return True
+
+        if char == "\n" and self.selectedMatchIx is not None:
+            self.context.removeDisplay(self)
+            self.context.openFile(self.matches[self.selectedMatchIx])
+            return False
+
+        if len(char) == 1 and (char.isalnum() or char in ("/ _.")):
+            self.setFilter(self.filterText[:self.cursor] + char + self.filterText[self.cursor:])
+            self.cursor += 1
+            return True
+
+
 class CursesWindow:
     """A wrapper around a standard curses 'window' object.
 
@@ -1401,7 +1691,7 @@ class CursesWindow:
         self.stdscr.chgat(y, x, count, attr)
 
     def addch(self, y, x, ch):
-        self.stdscr.chgat(y, x, ch)
+        self.stdscr.addch(y, x, ch)
 
     def addstr(self, y, x, text):
         self.stdscr.addstr(y, x, text)
