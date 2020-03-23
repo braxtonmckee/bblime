@@ -101,6 +101,11 @@ CANONICAL_CONTENTS["file.py"] = (
     "def f(x):\n"
     "    pass\n"
 )
+CANONICAL_CONTENTS["boo.py"] = (
+    "A = 'B'\n"
+    "B = 'C'\n"
+    "C = 'D'\n"
+)
 
 def canonicalFakeFileSet():
     return FakeFileSet(CANONICAL_CONTENTS)
@@ -123,7 +128,7 @@ def test_newline_with_indent():
     context = bblime.DisplayContext(FakeWindow(100, 50), canonicalFakeFileSet())
 
     # select 'file.py'
-    context.receiveChars(bblime.KEY_CTRL_P, *"file", "KEY_DOWN", "\n")
+    context.receiveChars(bblime.KEY_CTRL_P, *"file", "\n")
 
     # go to end of line 5 and hit enter
     context.receiveChars(bblime.KEY_CTRL_G, *"5\n", "KEY_END", "\n")
@@ -171,4 +176,32 @@ def test_newline_with_indent():
     assert context.currentOpenFile().lines[3] == ""
     assert context.currentOpenFile().lines[4] == "def f(x):"
 
+def test_multi_copy_paste():
+    context = bblime.DisplayContext(FakeWindow(100, 50), canonicalFakeFileSet())
 
+    # select 'file.py'
+    context.receiveChars(bblime.KEY_CTRL_P, *"boo", "\n")
+
+    # hit 'alt-shift-down' twice
+    context.receiveChars(bblime.KEY_SHIFT_ALT_DOWN, bblime.KEY_SHIFT_ALT_DOWN)
+
+    context.receiveChars("KEY_SRIGHT", bblime.KEY_CTRL_C)
+
+    context.receiveChars("KEY_END", bblime.KEY_CTRL_V)
+
+    assert context.currentOpenFile().lines[0] == "A = 'B'A"
+    assert context.currentOpenFile().lines[1] == "B = 'C'B"
+    assert context.currentOpenFile().lines[2] == "C = 'D'C"
+
+    # unselect
+    context.receiveChars(bblime.KEY_ESC)
+
+    # copy a whole line
+    context.receiveChars(bblime.KEY_CTRL_C)
+
+    # go to the middle of the line and paste
+    context.receiveChars("KEY_PPAGE")
+    context.receiveChars("KEY_RIGHT", bblime.KEY_CTRL_V)
+
+    assert context.currentOpenFile().lines[0] == "C = 'D'C"
+    assert context.currentOpenFile().lines[1] == "A = 'B'A"

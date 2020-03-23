@@ -13,10 +13,17 @@ KEY_CTRL_R = "\x12"
 KEY_CTRL_S = "\x13"
 KEY_CTRL_W = "\x17"
 KEY_CTRL_O = "\x0f"
+KEY_CTRL_C = "\x03"
+KEY_CTRL_V = "\x16"
 KEY_CTRL_Q = "\x11"
 KEY_CTRL_BACKSPACE = "\x08"
 KEY_ESC = "\x1b"
-
+KEY_SHIFT_ALT_DOWN = "kDN4"
+KEY_SHIFT_ALT_UP = "kUP4"
+KEY_CTRL_LEFT = "kLFT6"
+KEY_CTRL_SHIFT_LEFT = "kLFT5"
+KEY_CTRL_RIGHT = "kRIT6"
+KEY_CTRL_SHIFT_RIGHT = "kRIT5"
 
 MAX_COL = 1000000000
 
@@ -125,6 +132,8 @@ class DisplayContext:
     def __init__(self, stdscr, fileSet):
         self.fileSet = fileSet
         self.openFiles = {}
+        self.clipboard = None
+        self.clipboardIsWholeLine = False
 
         self.stdscr = stdscr
         self.windowY, self.windowX = self.stdscr.getmaxyx()
@@ -484,6 +493,12 @@ class Selection:
             else:
                 # this is a line delta
                 l1 += dLine
+
+                if l1 < 0 and dLine < -1:
+                    c1 = 0
+                elif l1 >= len(lines) and dLine > 1:
+                    c1 = MAX_COL
+
                 l1 = self.clipLine(l1, lines)
 
         if extend:
@@ -718,6 +733,40 @@ class TextBufferDisplay(Display):
                 self.redraw()
             return
 
+        if char == KEY_CTRL_C:
+            if len(self.selections) == 1 and self.selections[0].isSingle():
+                # grab the line
+                sel = self.selections[0].clipToReal(self.lines)
+                if self.lines:
+                    self.clipboard = [self.lines[sel.line0]]
+                    self.clipboardIsWholeLine = True
+                else:
+                    self.clipboardIsWholeLine = False
+                    self.clipboard = None
+            else:
+                self.clipboardIsWholeLine = False
+                self.clipboard = [
+                    s.selectedText(self.lines) for s in self.selections
+                ]
+
+        if char == KEY_CTRL_V:
+            if self.clipboardIsWholeLine:
+                for i in range(len(self.selections)):
+                    assert "\n" not in self.clipboard[0]
+                    self.insert(self.selections[i].line0, 0, self.clipboard[0] + "\n")
+            else:
+                for i in range(len(self.selections)):
+                    self.replaceText(self.selections[i], self.clipboard[i % len(self.clipboard)])
+
+            self.undoBuffer.pushState((list(self.lines), list(self.selections)))
+            self.ensureOnScreen(self.selections[-1])
+            self.redraw()
+            return
+
+        if char == KEY_ESC:
+            self.selections = self.selections[-1:]
+            return True
+
         if char == KEY_CTRL_S:
             self.save()
             self.redraw()
@@ -731,7 +780,9 @@ class TextBufferDisplay(Display):
         if char in (
             'KEY_LEFT', 'KEY_RIGHT', 'KEY_UP', 'KEY_DOWN', 'KEY_PPAGE', 'KEY_NPAGE', 'KEY_SPREVIOUS',
             'KEY_SNEXT', 'KEY_SR', 'KEY_SRIGHT', 'KEY_SLEFT', 'KEY_SF', 'KEY_HOME', 'KEY_SHOME',
-            'KEY_END', 'KEY_SEND', 'kRIT5', 'kRIT6', 'kLFT5', 'kLFT6', KEY_CTRL_D, 'kUP4', 'kDN4', KEY_ESC
+            'KEY_END', 'KEY_SEND',
+            KEY_CTRL_SHIFT_RIGHT, KEY_CTRL_RIGHT, KEY_CTRL_SHIFT_LEFT, KEY_CTRL_LEFT,
+            KEY_CTRL_D, KEY_SHIFT_ALT_UP, KEY_SHIFT_ALT_DOWN, KEY_ESC
         ):
             if not self.selections:
                 self.selections = [Selection(0, 0, 0, 0)]
@@ -795,23 +846,23 @@ class TextBufferDisplay(Display):
             if char == "KEY_SEND":
                 self.selections = [d.delta(self.lines, 0, MAX_COL, extend=True) for d in self.selections]
 
-            if char == "kRIT5":
+            if char == KEY_CTRL_SHIFT_RIGHT:
                 self.selections = [d.delta(self.lines, 0, 1, word=True) for d in self.selections]
 
-            if char == "kRIT6":
+            if char == KEY_CTRL_RIGHT:
                 self.selections = [d.delta(self.lines, 0, 1, word=True, extend=True) for d in self.selections]
 
-            if char == "kLFT5":
+            if char == KEY_CTRL_LEFT:
                 self.selections = [d.delta(self.lines, 0, -1, word=True) for d in self.selections]
 
-            if char == "kLFT6":
+            if char == KEY_CTRL_SHIFT_LEFT:
                 self.selections = [d.delta(self.lines, 0, -1, word=True, extend=True) for d in self.selections]
 
-            if char == "kUP4":
+            if char == KEY_SHIFT_ALT_UP:
                 # shift-alt-up
                 self.selections = self.selections + [d.delta(self.lines, -1, 0) for d in self.selections]
 
-            if char == "kDN4":
+            if char == KEY_SHIFT_ALT_DOWN:
                 # shift-alt-down
                 self.selections = self.selections + [d.delta(self.lines, 1, 0) for d in self.selections]
 
@@ -969,6 +1020,8 @@ class TextBufferDisplay(Display):
                 self.insert(line, col, "    ")
 
     def insert(self, line, col, newText):
+        if not newText:
+            return
         if newText == "\n" * len(newText):
             for i in range(len(self.selections)):
                 self.selections[i] = self.selections[i].insertedLines(line, col, len(newText))
@@ -982,9 +1035,10 @@ class TextBufferDisplay(Display):
             )
         elif "\n" in newText:
             lines = newText.split("\n")
+
             self.insert(line, col, lines[0])
-            self.insert(line, col + len(lines[0]), "\n" * len(lines))
-            self.insert(line + len(lines), 0, lines[-1])
+            self.insert(line, col + len(lines[0]), "\n" * (len(lines) - 1))
+            self.insert(line + len(lines) - 1, 0, lines[-1])
 
             for internalLineIx in range(1, len(lines) - 1):
                 self.lines[line + internalLineIx] = lines[internalLineIx]
@@ -1284,143 +1338,6 @@ class OpenFiles(Display):
             self.topLineIx = max(0, self.whichFileIx - self.context.windowY // 2)
 
 
-class FileSelector(Display):
-    def __init__(self, context):
-        self.context = context
-        self.filterText = ""
-        self.cursor = 0
-        self.selectedMatchIx = None
-        self.matches = self.context.fileSet.sortedNames
-
-        self.resized()
-
-    def resized(self):
-        self.width = min(self.context.windowX - 30, 150)
-        self.xPos = self.context.windowX // 2 - self.width // 2
-        self.yPos = 5
-
-    def setFilter(self, filterText):
-        self.filterText = filterText
-
-        filterFun = self.buildFilter(self.filterText)
-
-        self.matches = [x for x in self.context.fileSet.sortedNames if filterFun(x)]
-        self.selectedMatchIx = None
-
-    def buildFilter(self, filterText):
-        if not filterText:
-            return lambda x: True
-
-        regex = []
-
-        breakpoints = [0]
-
-        for i in range(1, len(filterText)):
-            if filterText[i].isupper() or filterText[i] == "_":
-                breakpoints.append(i)
-            elif filterText[i] == "/":
-                breakpoints.append(i)
-            elif filterText[i] == ".":
-                breakpoints.append(i)
-            elif i > 0 and filterText[i - 1] == "/":
-                breakpoints.append(i)
-
-        breakpoints.append(len(filterText))
-
-        dumpedSoFar = 0
-
-        for b in breakpoints:
-            regex.append(filterText[dumpedSoFar:b].replace(".", "\\."))
-            regex.append("[a-z0-9]*")
-            dumpedSoFar = b
-
-        pat = re.compile(".*" + "".join(regex) + ".*")
-
-        return lambda c: pat.match(c)
-
-    def redraw(self):
-        self.box(self.xPos, self.yPos, self.xPos + self.width, self.yPos + 20, clear=True)
-        self.textWithCursors(self.xPos + 1, self.yPos + 1, pad(self.filterText, self.width - 2), [self.cursor])
-
-        self.startMatchIx = 0
-        if self.selectedMatchIx is not None:
-            self.startMatchIx = max(0, self.selectedMatchIx - 4)
-
-        for lineIx in range(15):
-            matchIx = self.startMatchIx + lineIx
-
-            if matchIx >= 0 and matchIx < len(self.matches):
-                if matchIx == self.selectedMatchIx:
-                    self.highlightedText(self.xPos + 2, self.yPos + 3 + lineIx, pad(self.matches[matchIx], self.width - 4))
-                else:
-                    self.text(self.xPos + 2, self.yPos + 3 + lineIx, pad(self.matches[matchIx], self.width - 4))
-            else:
-                self.text(self.xPos + 2, self.yPos + 3 + lineIx, pad("", self.width - 4))
-
-    def receiveChar(self, char):
-        res = self._receiveChar(char)
-
-        if res:
-            self.redraw()
-
-        return res
-
-    def _receiveChar(self, char):
-        if char == KEY_ESC:
-            self.context.removeDisplay(self)
-            return True
-
-        if char == "KEY_BACKSPACE" and self.cursor > 0:
-            self.setFilter(self.filterText[:self.cursor - 1] + self.filterText[self.cursor:])
-            self.cursor -= 1
-            return True
-
-        if char == KEY_CTRL_BACKSPACE:
-            self.setFilter(self.filterText[self.cursor:])
-            self.cursor = 0
-            return True
-
-        if char == "kDC5":
-            self.setFilter(self.filterText[:self.cursor])
-            return True
-
-        if char == "KEY_DC" and self.cursor < len(self.filterText):
-            self.setFilter(self.filterText[:self.cursor] + self.filterText[self.cursor + 1:])
-            return True
-
-        if char == "KEY_LEFT":
-            self.cursor = max(0, self.cursor - 1)
-            return True
-
-        if char == "KEY_RIGHT":
-            self.cursor = min(len(self.filterText), self.cursor + 1)
-            return True
-
-        if char == "KEY_DOWN":
-            if self.selectedMatchIx is None:
-                self.selectedMatchIx = -1
-
-            self.selectedMatchIx = min(self.selectedMatchIx + 1, len(self.matches))
-            return True
-
-        if char == "KEY_UP":
-            if self.selectedMatchIx is None:
-                self.selectedMatchIx = -1
-
-            self.selectedMatchIx = max(0, self.selectedMatchIx - 1)
-            return True
-
-        if char == "\n" and self.selectedMatchIx is not None:
-            self.context.removeDisplay(self)
-            self.context.openFile(self.matches[self.selectedMatchIx])
-            return False
-
-        if len(char) == 1 and (char.isalnum() or char in ("/ _.")):
-            self.setFilter(self.filterText[:self.cursor] + char + self.filterText[self.cursor:])
-            self.cursor += 1
-            return True
-
-
 class GoToLineDisplay(Display):
     def __init__(self, context, file):
         super().__init__(context)
@@ -1630,9 +1547,12 @@ class FileSelector(Display):
             self.selectedMatchIx = max(0, self.selectedMatchIx - 1)
             return True
 
-        if char == "\n" and self.selectedMatchIx is not None:
+        if char == "\n":
+            if not self.matches:
+                return False
+
             self.context.removeDisplay(self)
-            self.context.openFile(self.matches[self.selectedMatchIx])
+            self.context.openFile(self.matches[self.selectedMatchIx or 0])
             return False
 
         if len(char) == 1 and (char.isalnum() or char in ("/ _.")):
