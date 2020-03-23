@@ -1088,20 +1088,38 @@ class TextBufferDisplay(Display):
                 self.redraw()
                 return
 
+            if char == "KEY_BTAB":
+                if len(self.selections) == 1 and self.selections[0].line0 != self.selections[0].line1:
+                    for i in range(self.selections[0].line0, self.selections[0].line1 + (1 if self.selections[0].col1 else 0)):
+                        if self.lines[i][:4] == "    ":
+                            self.deleteSelection(Selection(i, 0, i, 4))
+
+                    self.ensureOnScreen(self.selections[0])
+                    self.redraw()
+                    return True
+
             if char == "\t":
-                for i in range(len(self.selections)):
-                    self.deleteSelection(self.selections[i])
+                if len(self.selections) == 1 and self.selections[0].line0 != self.selections[0].line1:
+                    for i in range(self.selections[0].line0, self.selections[0].line1 + (1 if self.selections[0].col1 else 0)):
+                        self.insert(i, 0, "    ")
 
-                for i in range(len(self.selections)):
-                    self.insertTabWithIndent(self.selections[i].line1, self.selections[i].col1)
+                    self.ensureOnScreen(self.selections[0])
+                    self.redraw()
+                    return True
+                else:
+                    for i in range(len(self.selections)):
+                        self.deleteSelection(self.selections[i])
 
-                self.selections = Selection.mergeContiguous(self.selections)
+                    for i in range(len(self.selections)):
+                        self.insertTabWithIndent(self.selections[i].line1, self.selections[i].col1)
 
-                self.undoBuffer.pushState((list(self.lines), list(self.selections)))
+                    self.selections = Selection.mergeContiguous(self.selections)
 
-                self.ensureOnScreen(self.selections[-1])
-                self.redraw()
-                return
+                    self.undoBuffer.pushState((list(self.lines), list(self.selections)))
+
+                    self.ensureOnScreen(self.selections[-1])
+                    self.redraw()
+                    return
 
             if len(char) == 1 and char.isprintable():
                 # we're typing
