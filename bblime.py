@@ -4,8 +4,15 @@ import sys
 import os
 import re
 
+KEY_F3 = "KEY_F(3)"
+KEY_SHIFT_F3 = "KEY_F(15)"
+KEY_CTRL_F3 = "KEY_F(27)"
+KEY_ALT_F3 = "KEY_F(51)"
+
+KEY_CTRL_A = "\x01"
 KEY_CTRL_Z = "\x1a"
 KEY_CTRL_Y = "\x19"
+KEY_CTRL_F = "\x06"
 KEY_CTRL_G = "\x07"
 KEY_CTRL_P = "\x10"
 KEY_CTRL_D = "\x04"
@@ -17,6 +24,7 @@ KEY_CTRL_C = "\x03"
 KEY_CTRL_V = "\x16"
 KEY_CTRL_Q = "\x11"
 KEY_CTRL_BACKSPACE = "\x08"
+KEY_CTRL_DELETE = "kDC5"
 KEY_ESC = "\x1b"
 KEY_SHIFT_ALT_DOWN = "kDN4"
 KEY_SHIFT_ALT_UP = "kUP4"
@@ -24,7 +32,8 @@ KEY_CTRL_LEFT = "kLFT6"
 KEY_CTRL_SHIFT_LEFT = "kLFT5"
 KEY_CTRL_RIGHT = "kRIT6"
 KEY_CTRL_SHIFT_RIGHT = "kRIT5"
-
+KEY_ALT_PAGE_DOWN = "kNXT3"
+KEY_ALT_PAGE_UP = "kPRV3"
 MAX_COL = 1000000000
 
 
@@ -131,12 +140,109 @@ class DirFileSet(FileSet):
         super().__init__(names)
 
 
+class FindBox(Display):
+    def __init__(self, context):
+        super().__init__(context)
+
+        self.regex = False
+        self.wholeWord = False
+        self.caseSensitive = False
+
+        self.visible = False
+        self.showReplace = False
+        self.allFiles = False
+
+        self.pattern = ""
+        self.cursor = 0
+
+    def curHeight(self):
+        return 1
+
+    def setPattern(self, pattern):
+        self.pattern = pattern
+
+        openFile = self.context.currentOpenFile()
+
+        if openFile is not None:
+            selections = openFile.findAll(pattern)
+
+            if selections:
+                openFile.ensureOnScreen(selections[0])
+
+    def redraw(self):
+        ypos = self.context.windowY - 2
+        width = self.context.windowX
+        self.text(0, ypos, " " * width)
+        self.textBold(0, ypos, "FIND:")
+        self.textWithCursors(6, ypos, pad(self.pattern, width - 6), [self.cursor])
+
+    def receiveChar(self, char):
+        if char == KEY_ESC:
+            self.visible = False
+            return True
+
+        if char == "KEY_BACKSPACE" and self.cursor > 0:
+            self.setPattern(self.pattern[:self.cursor - 1] + self.pattern[self.cursor:])
+            self.cursor -= 1
+            return True
+
+        if char == KEY_CTRL_BACKSPACE:
+            self.setPattern(self.pattern[self.cursor:])
+            self.cursor = 0
+            return True
+
+        if char == KEY_CTRL_DELETE:
+            self.setPattern(self.pattern[:self.cursor])
+            return True
+
+        if char == "KEY_DC" and self.cursor < len(self.pattern):
+            self.setPattern(self.pattern[:self.cursor] + self.pattern[self.cursor + 1:])
+            return True
+
+        if char == "KEY_LEFT":
+            self.cursor = max(0, self.cursor - 1)
+            return True
+
+        if char == "KEY_RIGHT":
+            self.cursor = min(len(self.pattern), self.cursor + 1)
+            return True
+
+        if char in ("\n", KEY_CTRL_A):
+            openFile = self.context.currentOpenFile()
+
+            if openFile is not None:
+                if char == "\n":
+                    curSel = openFile.selections[-1]
+                    newSel = openFile.find(self.pattern, (curSel.line1, curSel.col1))
+                    if newSel is None:
+                        newSel = openFile.find(self.pattern, (0, 0))
+
+                    if newSel is not None:
+                        openFile.selections = [newSel]
+                else:
+                    openFile.selections = openFile.findAll(self.pattern)
+
+                if openFile.selections:
+                    openFile.ensureOnScreen(openFile.selections[0])
+
+                self.visible = False
+
+            return True
+
+        if len(char) == 1 and char.isprintable():
+            self.setPattern(self.pattern[:self.cursor] + char + self.pattern[self.cursor:])
+            self.cursor += 1
+            return True
+
+
 class DisplayContext:
     def __init__(self, stdscr, fileSet):
         self.fileSet = fileSet
         self.openFiles = {}
         self.clipboard = None
         self.clipboardIsWholeLine = False
+
+        self.findBox = FindBox(self)
 
         self.stdscr = stdscr
         self.windowY, self.windowX = self.stdscr.getmaxyx()
@@ -173,13 +279,13 @@ class DisplayContext:
             self.receiveChar(c)
 
     def receiveChar(self, char):
-        if char in ("kNXT3", "kPRV3"):
+        if char in (KEY_ALT_PAGE_DOWN, KEY_ALT_PAGE_UP):
             # alt-page-down/up
             if self.openFiles:
                 cof = self.currentOpenFile()
                 if cof is not None:
                     index = sorted(self.openFiles).index(cof.fileName)
-                    index = (index + (1 if char == 'kNXT3' else -1)) % len(self.openFiles)
+                    index = (index + (1 if char == KEY_ALT_PAGE_DOWN else -1)) % len(self.openFiles)
                     self.openFile(sorted(self.openFiles)[index])
             return True
 
@@ -717,6 +823,51 @@ class TextBufferDisplay(Display):
         pass
 
     def receiveChar(self, char):
+        if char == KEY_CTRL_F:
+            if not self.context.findBox.visible:
+                self.context.findBox.visible = True
+
+                # put the currently selected text into the find box
+                if not self.selections[-1].isSingle():
+                    s = self.selections[-1]
+                    if s.line0 == s.line1:
+                        self.context.findBox.pattern = s.selectedText(self.lines)
+                        self.context.findBox.cursor = len(self.context.findBox.pattern)
+
+                self.redraw()
+            return
+
+        if char in (KEY_F3, KEY_SHIFT_F3):
+            if not self.context.findBox.pattern:
+                return
+
+            direction = 1 if char == KEY_F3 else -1
+
+            selPoint = (self.selections[-1].line1, self.selections[-1].col1)
+            nextPt = self.find(self.context.findBox.pattern, selPoint, direction)
+
+            if nextPt is None:
+                if direction == 1:
+                    startPoint = (0, 0)
+                elif self.lines:
+                    startPoint = (len(self.lines) - 1, len(self.lines[-1]) + 1)
+                else:
+                    startPoint = (0, 0)
+
+                nextPt = self.find(self.context.findBox.pattern, startPoint, direction)
+
+            if nextPt is not None:
+                self.selections = [nextPt]
+                self.ensureOnScreen(nextPt)
+                self.redraw()
+
+            return
+
+        if self.context.findBox.visible:
+            if self.context.findBox.receiveChar(char):
+                self.redraw()
+            return
+
         # make sure we have an undo buffer
         if char == KEY_CTRL_Z:
             newState = self.undoBuffer.undo()
@@ -1003,6 +1154,9 @@ class TextBufferDisplay(Display):
         if self.isPythonFile():
             if 0 <= line < len(self.lines):
                 indent = self.lines[line][:len(self.lines[line]) - len(self.lines[line].lstrip())]
+                if len(indent) > col:
+                    indent = indent[:col]
+
                 if self.lines[line].endswith(":") and col >= len(self.lines[line]):
                     indent += "    "
 
@@ -1051,12 +1205,35 @@ class TextBufferDisplay(Display):
 
             self.lines[line] = self.lines[line][:col] + newText + self.lines[line][col:]
 
-    def find(self, searchFor, startLineAndCol):
+    def findAll(self, searchFor, maxCount=1000):
+        result = []
+
+        while len(result) < maxCount:
+            if not result:
+                searchPoint = (0, 0)
+            else:
+                searchPoint = (result[-1].line1, result[-1].col1)
+
+            sel = self.find(searchFor, searchPoint)
+
+            if sel is None:
+                return result
+
+            result.append(sel)
+
+        return result
+
+    def find(self, searchFor, startLineAndCol, direction=1):
         def indexIn(needle, haystack, startPos=None):
-            try:
-                return haystack.index(needle, startPos)
-            except ValueError:
+            if direction == -1:
+                res = haystack.rfind(needle, None, startPos - 1 if startPos is not None else None)
+            else:
+                res = haystack.find(needle, startPos)
+
+            if res == -1:
                 return None
+            else:
+                return res
 
         if "\n" in searchFor:
             # not implemented yet
@@ -1065,17 +1242,18 @@ class TextBufferDisplay(Display):
             line, col = startLineAndCol
 
             index = indexIn(searchFor, self.lines[line], col)
+
             if index is not None:
                 return Selection(line, index, line, index + len(searchFor))
 
-            line += 1
-            while line < len(self.lines):
+            line += direction
+            while 0 <= line < len(self.lines):
                 index = indexIn(searchFor, self.lines[line])
 
                 if index is not None:
                     return Selection(line, index, line, index + len(searchFor))
 
-                line += 1
+                line += direction
 
             return None
 
@@ -1102,7 +1280,12 @@ class TextBufferDisplay(Display):
         for selection in self.selections:
             selection.extendCursors(cursorsByLine, self.lines)
 
-        for screenRow in range(self.context.windowY - 2):
+        if self.context.findBox.visible:
+            bottomRows = 2 + self.context.findBox.curHeight()
+        else:
+            bottomRows = 2
+
+        for screenRow in range(self.context.windowY - bottomRows):
             lineNumber = self.topLine + screenRow + 1
 
             self.lightText(0, screenRow + 1, pad(str(lineNumber), self.linecountWidth + 2))
@@ -1113,6 +1296,9 @@ class TextBufferDisplay(Display):
                 self.visibleTextForLine(lineNumber - 1),
                 cursorsByLine.get(lineNumber - 1, [])
             )
+
+        if self.context.findBox.visible:
+            self.context.findBox.redraw()
 
         if self.getTitle() is not None:
             self.textBold(0, 0, pad(str(self.getTitle()), self.context.windowX - 20))
@@ -1135,6 +1321,8 @@ class FileDisplay(TextBufferDisplay):
 
         self.lines = self.context.fileSet.readlines(self.path)
         self.linesOnDisk = list(self.lines)
+
+        self.undoBuffer.pushState((list(self.lines), list(self.selections)))
 
     def isPythonFile(self):
         return self.fileName.endswith(".py")
@@ -1211,6 +1399,10 @@ class DefaultDisplay(TextBufferDisplay):
             "    Ctrl-S to save",
             "    Ctrl-R to revert",
             "    Ctrl-D to select words",
+            "    Ctrl-F to find",
+            "        Ctrl-A to select all finds simultaneously",
+            "    F3 to go to next find item",
+            "    Shift-F3 to go to prior find item"
         ]
 
 
@@ -1388,7 +1580,7 @@ class GoToLineDisplay(Display):
             self.cursor = 0
             return True
 
-        if char == "kDC5":
+        if char == KEY_CTRL_DELETE:
             self.setContents(self.contents[:self.cursor])
             return True
 
@@ -1520,7 +1712,7 @@ class FileSelector(Display):
             self.cursor = 0
             return True
 
-        if char == "kDC5":
+        if char == KEY_CTRL_DELETE:
             self.setFilter(self.filterText[:self.cursor])
             return True
 

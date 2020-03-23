@@ -81,7 +81,7 @@ class FakeWindow(bblime.CursesWindow):
         pass
 
     def addstr(self, y, x, text):
-        if x + len(text) >= self.width:
+        if x + len(text) > self.width:
             raise Exception("The real 'curses' would throw an exception here")
 
     def hline(self, y, x, linechar, count):
@@ -205,3 +205,50 @@ def test_multi_copy_paste():
 
     assert context.currentOpenFile().lines[0] == "C = 'D'C"
     assert context.currentOpenFile().lines[1] == "A = 'B'A"
+
+def test_find():
+    context = bblime.DisplayContext(FakeWindow(100, 50), canonicalFakeFileSet())
+
+    # select 'file.py'
+    context.receiveChars(bblime.KEY_CTRL_P, *"boo", "\n")
+
+    context.receiveChars(bblime.KEY_CTRL_F, *" = ", bblime.KEY_CTRL_A)
+
+    assert len(context.currentOpenFile().selections) == 3
+
+    context.receiveChars(bblime.KEY_ESC, 'KEY_PPAGE')
+    assert len(context.currentOpenFile().selections) == 1
+    assert context.currentOpenFile().selections[0].line0 == 0
+
+    context.receiveChars(bblime.KEY_CTRL_F, bblime.KEY_CTRL_BACKSPACE, "'", "\n")
+    assert len(context.currentOpenFile().selections) == 1
+
+    assert context.currentOpenFile().selections[0].line0 == 0
+    assert context.currentOpenFile().selections[0].col0 == 4
+
+    context.receiveChars(bblime.KEY_F3)
+    assert context.currentOpenFile().selections[0].line0 == 0
+    assert context.currentOpenFile().selections[0].col0 == 6
+
+    context.receiveChars(bblime.KEY_F3)
+    assert context.currentOpenFile().selections[0].line0 == 1
+    assert context.currentOpenFile().selections[0].col0 == 4
+
+    context.receiveChars(bblime.KEY_F3)
+    assert context.currentOpenFile().selections[0].line0 == 1
+    assert context.currentOpenFile().selections[0].col0 == 6
+
+    context.receiveChars(bblime.KEY_F3, bblime.KEY_F3)
+    assert context.currentOpenFile().selections[0].line0 == 2
+
+    context.receiveChars(bblime.KEY_F3, bblime.KEY_F3)
+    assert context.currentOpenFile().selections[0].line0 == 0
+    assert context.currentOpenFile().selections[0].col0 == 6
+
+    context.receiveChars(bblime.KEY_SHIFT_F3)
+    assert context.currentOpenFile().selections[0].line0 == 0
+    assert context.currentOpenFile().selections[0].col0 == 4
+
+    context.receiveChars(bblime.KEY_SHIFT_F3)
+    assert context.currentOpenFile().selections[0].line0 == 2
+    assert context.currentOpenFile().selections[0].col0 == 6
