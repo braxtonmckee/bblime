@@ -892,25 +892,25 @@ class TextBufferDisplay(Display):
                 # grab the line
                 sel = self.selections[0].clipToReal(self.lines)
                 if self.lines:
-                    self.clipboard = [self.lines[sel.line0]]
-                    self.clipboardIsWholeLine = True
+                    self.context.clipboard = [self.lines[sel.line0]]
+                    self.context.clipboardIsWholeLine = True
                 else:
-                    self.clipboardIsWholeLine = False
-                    self.clipboard = None
+                    self.context.clipboardIsWholeLine = False
+                    self.context.clipboard = None
             else:
-                self.clipboardIsWholeLine = False
-                self.clipboard = [
+                self.context.clipboardIsWholeLine = False
+                self.context.clipboard = [
                     s.selectedText(self.lines) for s in self.selections
                 ]
 
         if char == KEY_CTRL_V:
-            if self.clipboardIsWholeLine:
+            if self.context.clipboardIsWholeLine:
                 for i in range(len(self.selections)):
-                    assert "\n" not in self.clipboard[0]
-                    self.insert(self.selections[i].line0, 0, self.clipboard[0] + "\n")
+                    assert "\n" not in self.context.clipboard[0]
+                    self.insert(self.selections[i].line0, 0, self.context.clipboard[0] + "\n")
             else:
                 for i in range(len(self.selections)):
-                    self.replaceText(self.selections[i], self.clipboard[i % len(self.clipboard)])
+                    self.replaceText(self.selections[i], self.context.clipboard[i % len(self.context.clipboard)])
 
             self.undoBuffer.pushState((list(self.lines), list(self.selections)))
             self.ensureOnScreen(self.selections[-1])
