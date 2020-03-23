@@ -114,6 +114,9 @@ class DirFileSet(FileSet):
                 if subdir.endswith("/" + badDir) or subdir == badDir:
                     return
 
+            if subdir.split("/")[0].startswith("."):
+                return
+
             dirPart = [subdir] if subdir is not None else []
             ownDir = os.path.join(self.directory, *dirPart)
 
