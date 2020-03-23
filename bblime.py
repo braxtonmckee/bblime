@@ -31,6 +31,19 @@ class FileSet:
         self.namesToPaths = namesToPaths
         self.sortedNames = sorted(namesToPaths)
 
+    def readlines(self, path):
+        def stripnewline(x):
+            if x.endswith("\n"):
+                return x[:-1]
+            return x
+
+        with open(path, "r") as f:
+            return [stripnewline(x) for x in f.readlines()]
+
+    def writelines(self, path, lines):
+        with open(path, "w") as f:
+            f.write("".join([x + "\n" for x in lines]))
+
 
 class Display:
     """Baseclass for all things that make little windows."""
@@ -41,32 +54,32 @@ class Display:
         self.context.stdscr.addstr(y0, x0, text)
 
         for i in cursors:
-            self.context.stdscr.chgat(y0, x0 + i, 1, curses.A_STANDOUT)
+            self.context.stdscr.chgat(y0, x0 + i, 1, self.context.stdscr.A_STANDOUT)
 
     def lightText(self, x0, y0, text):
         self.context.stdscr.addstr(y0, x0, text)
-        self.context.stdscr.chgat(y0, x0, len(text), curses.A_DIM)
+        self.context.stdscr.chgat(y0, x0, len(text), self.context.stdscr.A_DIM)
 
     def textBold(self, x0, y0, text):
         self.context.stdscr.addstr(y0, x0, text)
-        self.context.stdscr.chgat(y0, x0, len(text), curses.A_BOLD)
+        self.context.stdscr.chgat(y0, x0, len(text), self.context.stdscr.A_BOLD)
 
     def highlightedText(self, x0, y0, text):
         self.context.stdscr.addstr(y0, x0, text)
-        self.context.stdscr.chgat(y0, x0, len(text), curses.A_STANDOUT)
+        self.context.stdscr.chgat(y0, x0, len(text), self.context.stdscr.A_STANDOUT)
 
     def text(self, x0, y0, text):
         self.context.stdscr.addstr(y0, x0, text)
 
     def box(self, x0, y0, x1, y1, clear=False):
-        self.context.stdscr.addch(y0, x0, curses.ACS_ULCORNER)
-        self.context.stdscr.addch(y1, x0, curses.ACS_LLCORNER)
-        self.context.stdscr.addch(y0, x1, curses.ACS_URCORNER)
-        self.context.stdscr.addch(y1, x1, curses.ACS_LRCORNER)
-        self.context.stdscr.hline(y0, x0 + 1, curses.ACS_HLINE, x1 - x0 - 1)
-        self.context.stdscr.hline(y1, x0 + 1, curses.ACS_HLINE, x1 - x0 - 1)
-        self.context.stdscr.vline(y0 + 1, x0, curses.ACS_VLINE, y1 - y0 - 1)
-        self.context.stdscr.vline(y0 + 1, x1, curses.ACS_VLINE, y1 - y0 - 1)
+        self.context.stdscr.addch(y0, x0, self.context.stdscr.ACS_ULCORNER)
+        self.context.stdscr.addch(y1, x0, self.context.stdscr.ACS_LLCORNER)
+        self.context.stdscr.addch(y0, x1, self.context.stdscr.ACS_URCORNER)
+        self.context.stdscr.addch(y1, x1, self.context.stdscr.ACS_LRCORNER)
+        self.context.stdscr.hline(y0, x0 + 1, self.context.stdscr.ACS_HLINE, x1 - x0 - 1)
+        self.context.stdscr.hline(y1, x0 + 1, self.context.stdscr.ACS_HLINE, x1 - x0 - 1)
+        self.context.stdscr.vline(y0 + 1, x0, self.context.stdscr.ACS_VLINE, y1 - y0 - 1)
+        self.context.stdscr.vline(y0 + 1, x1, self.context.stdscr.ACS_VLINE, y1 - y0 - 1)
 
         if clear:
             for row in range(y0 + 1, y1):
@@ -125,6 +138,11 @@ class DisplayContext:
         self.displays.extend(displays)
         self.fullRedraw()
 
+    def currentOpenFile(self):
+        if isinstance(self.displays[-1], FileDisplay):
+            return self.displays[-1]
+        return None
+
     def openFile(self, fileName):
         self.displays = [d for d in self.displays if not isinstance(d, TextBufferDisplay)]
 
@@ -136,6 +154,10 @@ class DisplayContext:
         self.displays.append(self.openFiles[fileName])
 
         self.fullRedraw()
+
+    def receiveChars(self, *chars):
+        for c in chars:
+            self.receiveChar(c)
 
     def receiveChar(self, char):
         if char == "KEY_RESIZE":
@@ -984,14 +1006,8 @@ class FileDisplay(TextBufferDisplay):
         self.fileName = fileName
         self.path = context.fileSet.namesToPaths[fileName]
 
-        with open(self.path, "r") as f:
-            def stripnewline(x):
-                if x.endswith("\n"):
-                    return x[:-1]
-                return x
-
-            self.lines = [stripnewline(x) for x in f.readlines()]
-            self.linesOnDisk = list(self.lines)
+        self.lines = self.context.fileSet.readlines(self.path)
+        self.linesOnDisk = list(self.lines)
 
     def isChanged(self):
         return self.lines != self.linesOnDisk
@@ -1001,25 +1017,18 @@ class FileDisplay(TextBufferDisplay):
 
     def save(self):
         if self.isChanged():
-            with open(self.path, "w") as f:
-                f.write("".join([x + "\n" for x in self.lines]))
-
+            self.context.fileSet.writelines(self.path, self.lines)
             self.linesOnDisk = self.lines
 
     def checkDisk(self):
         if not self.isChanged():
-            with open(self.path, "r") as f:
-                def stripnewline(x):
-                    if x.endswith("\n"):
-                        return x[:-1]
-                    return x
+            newLines = self.context.fileSet.readlines(self.path)
 
-                newLines = [stripnewline(x) for x in f.readlines()]
-                if newLines != self.lines:
-                    self.lines = newLines
-                    self.linesOnDisk = newLines
+            if newLines != self.lines:
+                self.lines = newLines
+                self.linesOnDisk = newLines
 
-                    self.selections = [s.ensureValid(lines) for s in self.selections]
+                self.selections = [s.ensureValid(lines) for s in self.selections]
 
     def revert(self):
         self.lines = self.linesOnDisk
@@ -1330,6 +1339,83 @@ class FileSelector(Display):
             self.cursor += 1
             return True
 
+
+class CursesWindow:
+    """A wrapper around a standard curses 'window' object.
+
+    We need this so we can test the object. Curses has a behavior
+    where you have to initialize the screen to determine some of these
+    constants - in a test environment, it's easier to just intercept
+    the whole interface.
+
+    Outside of 'main', all curses interactions should go through
+    this object.
+    """
+    def __init__(self, stdscr):
+        self.stdscr = stdscr
+
+    @property
+    def A_STANDOUT(self):
+        return curses.A_STANDOUT
+
+    @property
+    def A_DIM(self):
+        return curses.A_DIM
+
+    @property
+    def A_BOLD(self):
+        return curses.A_BOLD
+
+    @property
+    def A_STANDOUT(self):
+        return curses.A_STANDOUT
+
+    @property
+    def ACS_ULCORNER(self):
+        return curses.ACS_ULCORNER
+
+    @property
+    def ACS_LLCORNER(self):
+        return curses.ACS_LLCORNER
+
+    @property
+    def ACS_URCORNER(self):
+        return curses.ACS_URCORNER
+
+    @property
+    def ACS_LRCORNER(self):
+        return curses.ACS_LRCORNER
+
+    @property
+    def ACS_HLINE(self):
+        return curses.ACS_HLINE
+
+    @property
+    def ACS_VLINE(self):
+        return curses.ACS_VLINE
+
+    def getmaxyx(self):
+        return self.stdscr.getmaxyx()
+
+    def chgat(self, y, x, count, attr):
+        self.stdscr.chgat(y, x, count, attr)
+
+    def addch(self, y, x, ch):
+        self.stdscr.chgat(y, x, ch)
+
+    def addstr(self, y, x, text):
+        self.stdscr.addstr(y, x, text)
+
+    def hline(self, y, x, linechar, count):
+        self.stdscr.hline(y, x, linechar, count)
+
+    def vline(self, y, x, linechar, count):
+        self.stdscr.vline(y, x, linechar, count)
+
+    def erase(self):
+        self.stdscr.erase()
+
+
 def main(stdscr, *args):
     # Clear screen
     stdscr.clear()
@@ -1343,7 +1429,7 @@ def main(stdscr, *args):
     else:
         dirpath = args[0]
 
-    context = DisplayContext(stdscr, DirFileSet(dirpath))
+    context = DisplayContext(CursesWindow(stdscr), DirFileSet(dirpath))
     context.fullRedraw()
     stdscr.refresh()
 
