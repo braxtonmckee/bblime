@@ -1354,7 +1354,7 @@ class FileDisplay(TextBufferDisplay):
     def save(self):
         if self.isChanged():
             self.context.fileSet.writelines(self.path, self.lines)
-            self.linesOnDisk = self.lines
+            self.linesOnDisk = list(self.lines)
 
     def checkDisk(self):
         if not self.isChanged():
@@ -1362,12 +1362,12 @@ class FileDisplay(TextBufferDisplay):
 
             if newLines != self.lines:
                 self.lines = newLines
-                self.linesOnDisk = newLines
+                self.linesOnDisk = list(newLines)
 
                 self.selections = [s.ensureValid(lines) for s in self.selections]
 
     def revert(self):
-        self.lines = self.linesOnDisk
+        self.lines = list(self.linesOnDisk)
         self.checkDisk()
 
     def receiveChar(self, char):
