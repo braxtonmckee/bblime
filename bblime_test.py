@@ -188,8 +188,6 @@ def test_multi_copy_paste():
 
     context.receiveChars(bblime.KEY_SHIFT_RIGHT, bblime.KEY_CTRL_C)
 
-    print(context.clipboard, context.currentOpenFile().selections)
-
     context.receiveChars("KEY_END", bblime.KEY_CTRL_V)
 
     assert context.currentOpenFile().lines[0] == "A = 'B'A"

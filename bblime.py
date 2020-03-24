@@ -699,9 +699,9 @@ class Selection:
             if (l, c) < (line, col):
                 return l, c
             if l == line:
-                return l + 1, c - col
+                return l + count, c - col
             else:
-                return l + 1, c
+                return l + count, c
 
         l0, c0 = mapPoint(l0, c0)
         l1, c1 = mapPoint(l1, c1)
@@ -923,17 +923,18 @@ class TextBufferDisplay(Display):
             return
 
         if char == KEY_CTRL_V:
-            if self.context.clipboardIsWholeLine:
-                for i in range(len(self.selections)):
-                    assert "\n" not in self.context.clipboard[0]
-                    self.insert(self.selections[i].line0, 0, self.context.clipboard[0] + "\n")
-            else:
-                for i in range(len(self.selections)):
-                    self.replaceText(self.selections[i], self.context.clipboard[i % len(self.context.clipboard)])
+            if self.context.clipboard:
+                if self.context.clipboardIsWholeLine:
+                    for i in range(len(self.selections)):
+                        assert "\n" not in self.context.clipboard[0]
+                        self.insert(self.selections[i].line0, 0, self.context.clipboard[0] + "\n")
+                else:
+                    for i in range(len(self.selections)):
+                        self.replaceText(self.selections[i], self.context.clipboard[i % len(self.context.clipboard)])
 
-            self.undoBuffer.pushState((list(self.lines), list(self.selections)))
-            self.ensureOnScreen(self.selections[-1])
-            self.redraw()
+                self.undoBuffer.pushState((list(self.lines), list(self.selections)))
+                self.ensureOnScreen(self.selections[-1])
+                self.redraw()
             return
 
         if char == KEY_ESC:
