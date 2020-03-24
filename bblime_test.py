@@ -106,6 +106,7 @@ CANONICAL_CONTENTS["boo.py"] = (
     "B = 'C'\n"
     "C = 'D'\n"
 )
+CANONICAL_CONTENTS["long.py"] = "\n".join([f"line {i}" for i in range(1, 20)])
 
 def canonicalFakeFileSet():
     return FakeFileSet(CANONICAL_CONTENTS)
@@ -185,7 +186,9 @@ def test_multi_copy_paste():
     # hit 'alt-shift-down' twice
     context.receiveChars(bblime.KEY_SHIFT_ALT_DOWN, bblime.KEY_SHIFT_ALT_DOWN)
 
-    context.receiveChars("KEY_SRIGHT", bblime.KEY_CTRL_C)
+    context.receiveChars(bblime.KEY_SHIFT_RIGHT, bblime.KEY_CTRL_C)
+
+    print(context.clipboard, context.currentOpenFile().selections)
 
     context.receiveChars("KEY_END", bblime.KEY_CTRL_V)
 
@@ -319,3 +322,30 @@ def test_backspace2():
     # now hit backspace
     context.receiveChars('KEY_BACKSPACE')
     assert context.currentOpenFile().lines[2] == " f(x):"
+
+def test_cut_multiline():
+    context = bblime.DisplayContext(FakeWindow(100, 50), canonicalFakeFileSet())
+
+    # select 'long.py'
+    context.receiveChars(bblime.KEY_CTRL_P, *"long", "\n")
+
+    # go to line 4 and select three lines
+    context.receiveChars(bblime.KEY_CTRL_G, *"4\n", *[bblime.KEY_SHIFT_DOWN]*3)
+
+    # now cut
+    context.receiveChars(bblime.KEY_CTRL_X)
+
+    assert context.currentOpenFile().lines[2] == "line 3"
+    assert context.currentOpenFile().lines[3] == "line 7"
+
+    assert context.clipboard == ["line 4\nline 5\nline 6\n"]
+
+    # now paste
+    context.receiveChars(bblime.KEY_CTRL_V)
+    assert context.currentOpenFile().lines[2] == "line 3"
+    assert context.currentOpenFile().lines[3] == "line 4"
+    assert context.currentOpenFile().lines[4] == "line 5"
+    assert context.currentOpenFile().lines[5] == "line 6"
+    assert context.currentOpenFile().lines[6] == "line 7"
+
+

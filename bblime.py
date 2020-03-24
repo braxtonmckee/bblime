@@ -19,6 +19,7 @@ KEY_CTRL_D = "\x04"
 KEY_CTRL_R = "\x12"
 KEY_CTRL_S = "\x13"
 KEY_CTRL_W = "\x17"
+KEY_CTRL_X = "\x18"
 KEY_CTRL_O = "\x0f"
 KEY_CTRL_C = "\x03"
 KEY_CTRL_V = "\x16"
@@ -35,7 +36,10 @@ KEY_CTRL_RIGHT = "kRIT5"
 KEY_ALT_PAGE_DOWN = "kNXT3"
 KEY_ALT_PAGE_UP = "kPRV3"
 MAX_COL = 1000000000
-
+KEY_SHIFT_DOWN = "KEY_SF"
+KEY_SHIFT_UP = "KEY_SR"
+KEY_SHIFT_LEFT = "KEY_SLEFT"
+KEY_SHIFT_RIGHT = "KEY_SRIGHT"
 
 def pad(text, chars):
     if len(text) > chars:
@@ -623,7 +627,7 @@ class Selection:
 
         return "\n".join(
             [lines[self.line0][self.col0:]]
-            + lines[self.line0 + 1:self.line1 - 1]
+            + lines[self.line0 + 1:self.line1]
             + [lines[self.line1][:self.col1]]
         )
 
@@ -887,21 +891,36 @@ class TextBufferDisplay(Display):
                 self.redraw()
             return
 
-        if char == KEY_CTRL_C:
+        if char in (KEY_CTRL_C, KEY_CTRL_X):
             if len(self.selections) == 1 and self.selections[0].isSingle():
                 # grab the line
                 sel = self.selections[0].clipToReal(self.lines)
                 if self.lines:
                     self.context.clipboard = [self.lines[sel.line0]]
                     self.context.clipboardIsWholeLine = True
+
+                    if char == KEY_CTRL_X:
+                        self.deleteSelection(Selection(self.line0, 0, self.line1, 0))
                 else:
                     self.context.clipboardIsWholeLine = False
                     self.context.clipboard = None
             else:
                 self.context.clipboardIsWholeLine = False
+
                 self.context.clipboard = [
                     s.selectedText(self.lines) for s in self.selections
                 ]
+
+                if char == KEY_CTRL_X:
+                    for i in range(len(self.selections)):
+                        self.deleteSelection(self.selections[i])
+
+            if char == KEY_CTRL_X:
+                self.undoBuffer.pushState((list(self.lines), list(self.selections)))
+                self.ensureOnScreen(self.selections[-1])
+                self.redraw()
+
+            return
 
         if char == KEY_CTRL_V:
             if self.context.clipboardIsWholeLine:
@@ -933,8 +952,8 @@ class TextBufferDisplay(Display):
 
         if char in (
             'KEY_LEFT', 'KEY_RIGHT', 'KEY_UP', 'KEY_DOWN', 'KEY_PPAGE', 'KEY_NPAGE', 'KEY_SPREVIOUS',
-            'KEY_SNEXT', 'KEY_SR', 'KEY_SRIGHT', 'KEY_SLEFT', 'KEY_SF', 'KEY_HOME', 'KEY_SHOME',
-            'KEY_END', 'KEY_SEND',
+            'KEY_SNEXT', KEY_SHIFT_DOWN, KEY_SHIFT_UP, 'KEY_SLEFT', 'KEY_SF', 'KEY_HOME', 'KEY_SHOME',
+            'KEY_END', 'KEY_SEND', KEY_SHIFT_RIGHT, KEY_SHIFT_LEFT,
             KEY_CTRL_SHIFT_RIGHT, KEY_CTRL_RIGHT, KEY_CTRL_SHIFT_LEFT, KEY_CTRL_LEFT,
             KEY_CTRL_D, KEY_SHIFT_ALT_UP, KEY_SHIFT_ALT_DOWN, KEY_ESC
         ):
@@ -968,16 +987,16 @@ class TextBufferDisplay(Display):
             if char == "KEY_SNEXT":
                 self.selections = [d.delta(self.lines, self.context.windowY, 0, extend=True) for d in self.selections]
 
-            if char == "KEY_SR":
+            if char == KEY_SHIFT_UP:
                 self.selections = [d.delta(self.lines, -1, 0, extend=True) for d in self.selections]
 
-            if char == "KEY_SRIGHT":
+            if char == KEY_SHIFT_RIGHT:
                 self.selections = [d.delta(self.lines, 0, 1, extend=True) for d in self.selections]
 
-            if char == "KEY_SLEFT":
+            if char == KEY_SHIFT_LEFT:
                 self.selections = [d.delta(self.lines, 0, -1, extend=True) for d in self.selections]
 
-            if char == "KEY_SF":
+            if char == KEY_SHIFT_DOWN:
                 self.selections = [d.delta(self.lines, 1, 0, extend=True) for d in self.selections]
 
             if char == "KEY_HOME":
