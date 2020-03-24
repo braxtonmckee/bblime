@@ -252,3 +252,70 @@ def test_find():
     context.receiveChars(bblime.KEY_SHIFT_F3)
     assert context.currentOpenFile().selections[0].line0 == 2
     assert context.currentOpenFile().selections[0].col0 == 6
+
+def test_backspace():
+    context = bblime.DisplayContext(FakeWindow(100, 50), canonicalFakeFileSet())
+
+    # select 'file.py'
+    context.receiveChars(bblime.KEY_CTRL_P, *"file", "\n")
+
+    # go to line 4, "def f(x):"
+    context.receiveChars(bblime.KEY_CTRL_G, *"4\n")
+    assert context.currentOpenFile().lines[3] == "def f(x):"
+
+    # control-right to end of 'def', then control shift right to select 'f'
+    assert context.currentOpenFile().selections[0].col0 == 0
+    context.receiveChars(bblime.KEY_CTRL_RIGHT)
+
+    assert context.currentOpenFile().selections[0].col0 == 3
+    assert context.currentOpenFile().selections[0].col1 == 3
+
+    context.receiveChars(bblime.KEY_CTRL_SHIFT_RIGHT)
+    assert context.currentOpenFile().selections[0].col0 == 3
+    assert context.currentOpenFile().selections[0].col1 == 5
+
+    # delete the 'f'
+    context.receiveChars('KEY_DC')
+    assert context.currentOpenFile().lines[3] == "def(x):"
+    assert context.currentOpenFile().selections[0].col0 == 3
+    assert context.currentOpenFile().selections[0].col1 == 3
+
+    # now hit backspace
+    context.receiveChars('KEY_BACKSPACE')
+    assert context.currentOpenFile().lines[3] == "de(x):"
+
+    # now hit backspace
+    context.receiveChars('KEY_BACKSPACE')
+    context.receiveChars('KEY_BACKSPACE')
+    assert context.currentOpenFile().lines[3] == "(x):"
+
+    context.receiveChars('KEY_BACKSPACE')
+    assert context.currentOpenFile().lines[2] == "(x):"
+
+    context.receiveChars('KEY_BACKSPACE')
+    assert context.currentOpenFile().lines[1] == "CONSTANT = 'hi'(x):"
+
+def test_backspace2():
+    context = bblime.DisplayContext(FakeWindow(100, 50), canonicalFakeFileSet())
+
+    # select 'file.py'
+    context.receiveChars(bblime.KEY_CTRL_P, *"file", "\n")
+
+    # go to line 4, "def f(x):"
+    context.receiveChars(bblime.KEY_CTRL_G, *"4\n")
+    assert context.currentOpenFile().lines[3] == "def f(x):"
+
+    # control-shift-right and delete 'def'
+    context.receiveChars(bblime.KEY_CTRL_SHIFT_RIGHT)
+    assert context.currentOpenFile().selections[0].col0 == 0
+    assert context.currentOpenFile().selections[0].col1 == 3
+
+    # delete the 'def'
+    context.receiveChars('KEY_DC')
+    assert context.currentOpenFile().lines[3] == " f(x):"
+    assert context.currentOpenFile().selections[0].col0 == 0
+    assert context.currentOpenFile().selections[0].col1 == 0
+
+    # now hit backspace
+    context.receiveChars('KEY_BACKSPACE')
+    assert context.currentOpenFile().lines[2] == " f(x):"

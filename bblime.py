@@ -28,10 +28,10 @@ KEY_CTRL_DELETE = "kDC5"
 KEY_ESC = "\x1b"
 KEY_SHIFT_ALT_DOWN = "kDN4"
 KEY_SHIFT_ALT_UP = "kUP4"
-KEY_CTRL_LEFT = "kLFT6"
-KEY_CTRL_SHIFT_LEFT = "kLFT5"
-KEY_CTRL_RIGHT = "kRIT6"
-KEY_CTRL_SHIFT_RIGHT = "kRIT5"
+KEY_CTRL_SHIFT_LEFT = "kLFT6"
+KEY_CTRL_LEFT = "kLFT5"
+KEY_CTRL_SHIFT_RIGHT = "kRIT6"
+KEY_CTRL_RIGHT = "kRIT5"
 KEY_ALT_PAGE_DOWN = "kNXT3"
 KEY_ALT_PAGE_UP = "kPRV3"
 MAX_COL = 1000000000
@@ -1000,10 +1000,10 @@ class TextBufferDisplay(Display):
             if char == "KEY_SEND":
                 self.selections = [d.delta(self.lines, 0, MAX_COL, extend=True) for d in self.selections]
 
-            if char == KEY_CTRL_SHIFT_RIGHT:
+            if char == KEY_CTRL_RIGHT:
                 self.selections = [d.delta(self.lines, 0, 1, word=True) for d in self.selections]
 
-            if char == KEY_CTRL_RIGHT:
+            if char == KEY_CTRL_SHIFT_RIGHT:
                 self.selections = [d.delta(self.lines, 0, 1, word=True, extend=True) for d in self.selections]
 
             if char == KEY_CTRL_LEFT:
